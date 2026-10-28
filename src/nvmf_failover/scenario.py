@@ -128,16 +128,54 @@ def _check_step(raw: object, where: str) -> None:
     hold = raw.get("hold", 0)
     if not isinstance(hold, int | float) or hold < 0:
         raise ScenarioError(f"{where}: hold must be a number >= 0")
-    needs = {
-        "fc-link": "host",
-        "fc-lip": "host",
-        "pci-unbind": "host",
-        "ontap-lif": "lif",
-        "tcp-port": "address",
-        "brocade-port": "wwpn",
-    }.get(str(kind))
+    needs = TARGETS.get(str(kind))
     if needs and needs not in raw:
         raise ScenarioError(f"{where}: {kind} needs {needs}")
+
+
+# What the target of a single fault names, per kind
+TARGETS = {
+    "fc-link": "host",
+    "fc-lip": "host",
+    "pci-unbind": "host",
+    "ontap-lif": "lif",
+    "tcp-port": "address",
+    "brocade-port": "wwpn",
+}
+
+
+def fault_raw(
+    kind: str, target: str, action: str, vserver: str = "", force: bool = False
+) -> dict[str, Any]:
+    """The step of one fault given by hand: hostN, [VSERVER/]LIF, WWPN or
+    ADDRESS[:PORT] as @target."""
+    raw: dict[str, Any] = {"fault": kind, "action": action}
+    if kind not in TARGETS:
+        raise FaultError(f"{kind}: not a single fault")
+    if kind == "ontap-lif":
+        if "/" in target and not vserver:
+            vserver, _, target = target.partition("/")
+        raw["lif"] = target
+        if vserver:
+            raw["vserver"] = vserver
+    elif kind == "brocade-port":
+        raw |= {"wwpn": target, "force": force}
+    elif kind == "tcp-port":
+        address, sep, port = target.rpartition(":")
+        if (
+            not sep
+            or not port.isdigit()
+            or (
+                ":" in address
+                and not (address.startswith("[") and address.endswith("]"))
+            )
+        ):
+            # a bare address, IPv6 too
+            address, port = target, "4420"
+        raw |= {"address": address.strip("[]"), "port": port}
+    else:
+        raw["host"] = target
+    return raw
 
 
 def make_fault(raw: dict[str, Any], ctx: Context) -> Fault:

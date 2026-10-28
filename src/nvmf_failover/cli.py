@@ -18,6 +18,7 @@ from . import __version__, model, powerstore, resolve
 from . import config as config_mod
 from . import scenario as scenario_mod
 from .brocade import SwitchPool
+from .context import fault_context
 from .discover import Inventory, discover
 from .execute import Observer, execute, expectation_failures
 from .faults import FaultError
@@ -130,21 +131,16 @@ def _inventory_json(inv: Inventory) -> dict[str, object]:
 
 def cmd_fault(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
-    raw = {"fault": args.kind, "action": args.action}
-    if args.kind in ("fc-link", "fc-lip", "pci-unbind"):
-        raw["host"] = args.target
-    elif args.kind == "ontap-lif":
-        raw["lif"] = args.target
-        if args.vserver:
-            raw["vserver"] = args.vserver
-    elif args.kind == "brocade-port":
-        raw |= {"wwpn": args.target, "force": args.force}
-    else:
-        address, _, port = args.target.rpartition(":")
-        raw |= {"address": address, "port": port or "4420"}
-    with _context(cfg, system) as ctx:
-        fault = scenario_mod.make_fault(raw, ctx)
-        getattr(fault, args.action)()
+    raw = scenario_mod.fault_raw(
+        args.kind, args.target, args.action, args.vserver or "", args.force
+    )
+    pool = SwitchPool()
+    try:
+        with fault_context(cfg, system, args.kind, pool) as ctx:
+            fault = scenario_mod.make_fault(raw, ctx)
+            getattr(fault, args.action)()
+    finally:
+        pool.close()
     print(f"{args.action} {fault.key}")
     return 0
 
@@ -364,10 +360,8 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_discover)
 
     s = sub.add_parser("fault", help="apply one fault by hand")
-    s.add_argument(
-        "kind", choices=[k for k in scenario_mod.FAULT_KINDS if k != "ontap-lif-cycle"]
-    )
-    s.add_argument("target", help="hostN, LIF name, WWPN, or ADDRESS[:PORT]")
+    s.add_argument("kind", choices=list(scenario_mod.TARGETS))
+    s.add_argument("target", help="hostN, [VSERVER/]LIF, WWPN, or ADDRESS[:PORT]")
     s.add_argument("action", choices=scenario_mod.ACTIONS)
     s.add_argument("--vserver", help="for ontap-lif, default from the config")
     s.add_argument(

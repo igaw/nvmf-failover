@@ -13,6 +13,7 @@ from nvmf_failover.scenario import (
     ScenarioError,
     Step,
     expand,
+    fault_raw,
     load,
     parse,
 )
@@ -185,3 +186,29 @@ def test_shipped_scenarios_parse(path: Path) -> None:
         assert resolve_parse(data, str(path)).phases
     else:
         assert load(path).steps
+
+
+@pytest.mark.parametrize(
+    ("kind", "target", "expected"),
+    [
+        ("fc-link", "host3", {"host": "host3"}),
+        ("ontap-lif", "lif1", {"lif": "lif1"}),
+        ("ontap-lif", "svm/lif1", {"lif": "lif1", "vserver": "svm"}),
+        ("brocade-port", "20:17", {"wwpn": "20:17", "force": False}),
+        ("tcp-port", "10.0.0.1:4421", {"address": "10.0.0.1", "port": "4421"}),
+        ("tcp-port", "10.0.0.1", {"address": "10.0.0.1", "port": "4420"}),
+        ("tcp-port", "fe80::1", {"address": "fe80::1", "port": "4420"}),
+        ("tcp-port", "[fe80::1]:4421", {"address": "fe80::1", "port": "4421"}),
+    ],
+)
+def test_fault_raw(kind: str, target: str, expected: dict[str, object]) -> None:
+    assert fault_raw(kind, target, "down") == {
+        "fault": kind,
+        "action": "down",
+        **expected,
+    }
+
+
+def test_fault_raw_refuses_a_cycle() -> None:
+    with pytest.raises(FaultError, match="not a single fault"):
+        fault_raw("ontap-lif-cycle", "svm", "down")

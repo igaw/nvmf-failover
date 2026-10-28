@@ -78,3 +78,20 @@ def test_run_restores_and_passes(system: FakeSystem, tmp_path: Path) -> None:
     ]
     texts = [e["text"] for e in events]
     assert "down fc-link:host3" in texts and "restore fc-link:host3" in texts
+
+
+def test_link_fault_opens_no_cluster_shell(
+    system: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[object] = []
+    monkeypatch.setattr(
+        "nvmf_failover.context.OntapShell", lambda cfg: opened.append(cfg)
+    )
+    system.add_scsi_host("host3", "lpfc")
+    cfg = tmp_path / "ontap.toml"
+    cfg.write_text('[ontap]\nhost = "cluster"\nuser = "admin"\npassword = "pw"\n')
+    cfg.chmod(0o600)
+
+    assert main(["-c", str(cfg), "fault", "fc-link", "host3", "down"], system) == 0
+
+    assert opened == []
