@@ -226,8 +226,13 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
     data = _load_scenario(args.scenario)
     described = resolve.is_described(data)
-    out = args.out / time.strftime(f"%Y%m%d-%H%M%S-{args.scenario.stem}")
-    out.mkdir(parents=True)
+    out = args.run_dir or args.out / time.strftime(
+        f"%Y%m%d-%H%M%S-{args.scenario.stem}"
+    )
+    if (out / "events.log").exists():
+        print(f"{out}: holds a run already", file=sys.stderr)
+        return 2
+    out.mkdir(parents=True, exist_ok=True)
     start = time.time()
     log = (out / "events.log").open("w")
 
@@ -409,6 +414,11 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("runs"),
         help="directory for the run logs (default ./runs)",
+    )
+    s.add_argument(
+        "--run-dir",
+        type=Path,
+        help="the logs of this run exactly here, instead of a new directory in --out",
     )
     s.add_argument(
         "--no-journal",

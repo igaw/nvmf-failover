@@ -95,3 +95,21 @@ def test_link_fault_opens_no_cluster_shell(
     assert main(["-c", str(cfg), "fault", "fc-link", "host3", "down"], system) == 0
 
     assert opened == []
+
+
+def test_run_into_a_given_directory(system: FakeSystem, tmp_path: Path) -> None:
+    system.add_scsi_host("host3", "lpfc")
+    system.add_ctrl("nvme5", fc_addr("0x201900a09890f5bf"))
+    cfg = tmp_path / "none.toml"
+    cfg.write_text("")
+    cfg.chmod(0o600)
+    scen = tmp_path / "bounce.toml"
+    scen.write_text('[[steps]]\nfault = "fc-link"\nhost = "host3"\naction = "down"\n')
+    run = tmp_path / "runs" / "the-run"
+    run.mkdir(parents=True)
+    argv = ["-c", str(cfg), "run", str(scen), "--run-dir", str(run), "--no-journal"]
+
+    assert main(argv, system) == 0
+    assert json.loads((run / "summary.json").read_text())["passed"] is True
+    # a directory with a run in it is not overwritten
+    assert main(argv, system) == 2
