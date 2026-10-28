@@ -185,7 +185,9 @@ def _plan(
     described = resolve.parse(data, where)
     inv = ctx.inventory or Inventory(hostnqn=_hostnqn(system))
     mdl = model.build(system, inv, ctx.switches, ctx.connect if ctx.switches else None)
-    timers = resolve.kernel_timers(system, mdl.select(**described.selector))
+    timers = resolve.kernel_timers(
+        system, [p.ctrl.name for p in mdl.select(**described.selector)]
+    )
     return resolve.resolve(described, mdl, ctx, timers)
 
 

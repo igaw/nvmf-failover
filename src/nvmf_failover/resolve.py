@@ -29,7 +29,7 @@ hosts use too is refused unless the phase sets allow_shared.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -339,9 +339,10 @@ def resolve(
     )
 
 
-def kernel_timers(system: Any, paths: list[Path]) -> dict[str, float]:
+def kernel_timers(system: Any, ctrls: Iterable[str]) -> dict[str, float]:
     """dev_loss_tmo of the NVMe target remote ports, ctrl_loss_tmo and
-    fast_io_fail_tmo of the selected controllers (the largest of each)."""
+    fast_io_fail_tmo of the controllers named @ctrls (the largest of each)."""
+    ctrls = list(ctrls)
     out: dict[str, float] = {}
     base = system.path("/sys/class/fc_remote_ports")
     if base.is_dir():
@@ -356,8 +357,8 @@ def kernel_timers(system: Any, paths: list[Path]) -> dict[str, float]:
             out["dev_loss_tmo"] = max(values)
     for name in ("ctrl_loss_tmo", "fast_io_fail_tmo"):
         values = []
-        for path in paths:
-            value = system.read(f"/sys/class/nvme/{path.ctrl.name}/{name}")
+        for ctrl in ctrls:
+            value = system.read(f"/sys/class/nvme/{ctrl}/{name}")
             if value.lstrip("-").isdigit() and int(value) >= 0:
                 values.append(float(value))
         if values:

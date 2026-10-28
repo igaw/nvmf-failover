@@ -185,7 +185,7 @@ def test_kernel_timers(system: FakeSystem) -> None:
     system.path("/sys/class/nvme/nvme1/ctrl_loss_tmo").write_text("600\n")
     system.path("/sys/class/nvme/nvme2/ctrl_loss_tmo").write_text("off\n")
     model = build(system, inventory())
-    assert kernel_timers(system, model.select()) == {
+    assert kernel_timers(system, [p.ctrl.name for p in model.select()]) == {
         "dev_loss_tmo": 30.0,
         "ctrl_loss_tmo": 600.0,
     }
