@@ -23,11 +23,14 @@ class Identity:
     subsysnqn: str
     traddr: str
     host_traddr: str
+    # TCP and RDMA: a target serves several ports on one address
+    trsvcid: str = ""
 
     def short(self) -> str:
         """A compact form for logs: subsystem name, target, host port."""
         nqn = self.subsysnqn.rsplit(":", 1)[-1]
-        return f"{nqn} {_port(self.traddr)} <- {_port(self.host_traddr)}"
+        target = _port(self.traddr) + (f":{self.trsvcid}" if self.trsvcid else "")
+        return f"{nqn} {target} <- {_port(self.host_traddr)}"
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ def controllers(
             subsysnqn="" if nqn in _UNKNOWN else nqn,
             traddr=addr.get("traddr", ""),
             host_traddr=addr.get("host_traddr", ""),
+            trsvcid=addr.get("trsvcid", ""),
         )
         try:
             children = sorted(entry.iterdir())

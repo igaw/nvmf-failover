@@ -82,3 +82,18 @@ def test_controller_deleted_during_the_scan_is_skipped(
 
     monkeypatch.setattr(Path, "iterdir", iterdir)
     assert [c.name for c in controllers(system)] == ["nvme1"]
+
+
+def test_tcp_ports_of_one_address_are_different_paths(system: FakeSystem) -> None:
+    for name, port in (("nvme0", 4421), ("nvme1", 4422)):
+        system.add_ctrl(
+            name,
+            f"traddr=192.168.30.30,trsvcid={port},src_addr=192.168.30.31",
+            transport="tcp",
+        )
+
+    ctrls = controllers(system)
+
+    assert len(by_identity(ctrls)) == 2
+    assert ctrls[0].identity.trsvcid == "4421"
+    assert ctrls[1].identity.short() == "subsystem.dolin 192.168.30.30:4422 <- "
