@@ -184,8 +184,21 @@ def test_kernel_timers(system: FakeSystem) -> None:
         (rport / "dev_loss_tmo").write_text(tmo + "\n")
     system.path("/sys/class/nvme/nvme1/ctrl_loss_tmo").write_text("600\n")
     system.path("/sys/class/nvme/nvme2/ctrl_loss_tmo").write_text("off\n")
+    for ctrl, attr, value in (
+        ("nvme1", "reconnect_delay", "2"),
+        ("nvme2", "reconnect_delay", "10"),
+        ("nvme1", "kato", "5"),
+        ("nvme1", "io_timeout", "30000"),
+        ("nvme2", "admin_timeout", "60000"),
+        ("nvme1", "fast_io_fail_tmo", "off"),
+    ):
+        system.path(f"/sys/class/nvme/{ctrl}/{attr}").write_text(value + "\n")
     model = build(system, inventory())
     assert kernel_timers(system, [p.ctrl.name for p in model.select()]) == {
         "dev_loss_tmo": 30.0,
         "ctrl_loss_tmo": 600.0,
+        "reconnect_delay": 10.0,
+        "kato": 5.0,
+        "io_timeout": 30.0,
+        "admin_timeout": 60.0,
     }

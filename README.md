@@ -96,8 +96,8 @@ node = "*"                      # optional: array node
 fail = "host-port"              # host-port, host-cable, target-port,
                                 # array-node, fabric
 pick = "each"                   # one, each, all-but-one, all
-duration = "dev_loss_tmo + 30s" # kernel timers: dev_loss_tmo,
-gap = "until-recovered"         # ctrl_loss_tmo, fast_io_fail_tmo
+duration = "dev_loss_tmo + 30s" # kernel timers, see below
+gap = "until-recovered"
 
 [expect]
 io_errors = 0
@@ -105,6 +105,12 @@ paths_during = 1                # live paths per subsystem, at least
 recovered_within = "300s"
 reconnected_by = "discoverd"    # kernel, discoverd or any
 ```
+
+Durations may name the kernel timers of the selected paths, read from
+sysfs, in seconds (the largest value if the paths differ):
+`dev_loss_tmo` (FC remote ports), `ctrl_loss_tmo`, `fast_io_fail_tmo`,
+`reconnect_delay`, `kato` (keep alive), `io_timeout` and `admin_timeout`.
+A timer that is off or that the kernel doesn't show can't be used.
 
 The tool picks how to break each element: an lpfc port through its link,
 another driver's port by unbinding its PCI function, a cable or a PowerStore

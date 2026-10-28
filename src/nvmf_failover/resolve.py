@@ -339,9 +339,23 @@ def resolve(
     )
 
 
+# Controller attributes (sysfs name, timer name, unit in seconds); the
+# per-controller timeouts are in milliseconds
+CTRL_TIMERS = (
+    ("ctrl_loss_tmo", "ctrl_loss_tmo", 1.0),
+    ("fast_io_fail_tmo", "fast_io_fail_tmo", 1.0),
+    ("reconnect_delay", "reconnect_delay", 1.0),
+    ("kato", "kato", 1.0),
+    ("io_timeout", "io_timeout", 0.001),
+    ("admin_timeout", "admin_timeout", 0.001),
+)
+
+
 def kernel_timers(system: Any, ctrls: Iterable[str]) -> dict[str, float]:
-    """dev_loss_tmo of the NVMe target remote ports, ctrl_loss_tmo and
-    fast_io_fail_tmo of the controllers named @ctrls (the largest of each)."""
+    """The timers durations may name, in seconds, the largest of each:
+    dev_loss_tmo of the NVMe target remote ports, and the fabrics timers of
+    the controllers named @ctrls. A timer that is off ("off", -1) or that
+    this kernel doesn't show is left out."""
     ctrls = list(ctrls)
     out: dict[str, float] = {}
     base = system.path("/sys/class/fc_remote_ports")
@@ -355,12 +369,12 @@ def kernel_timers(system: Any, ctrls: Iterable[str]) -> dict[str, float]:
                     values.append(float(value))
         if values:
             out["dev_loss_tmo"] = max(values)
-    for name in ("ctrl_loss_tmo", "fast_io_fail_tmo"):
+    for attr, name, unit in CTRL_TIMERS:
         values = []
         for ctrl in ctrls:
-            value = system.read(f"/sys/class/nvme/{ctrl}/{name}")
+            value = system.read(f"/sys/class/nvme/{ctrl}/{attr}")
             if value.lstrip("-").isdigit() and int(value) >= 0:
-                values.append(float(value))
+                values.append(float(value) * unit)
         if values:
             out[name] = max(values)
     return out
