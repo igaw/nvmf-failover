@@ -1,4 +1,6 @@
+import errno
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -119,3 +121,91 @@ def test_tcp_port_ipv6_uses_ip6(system: FakeSystem, tmp_path: Path) -> None:
     TcpPortFault(system, "fd00::5", 4420).down()
     rule = next(c for c in system.commands if c[:3] == ["nft", "add", "rule"])
     assert rule[6:8] == ["ip6", "saddr"]
+
+
+@dataclass
+class LpfcSystem(FakeSystem):
+    """lpfc's link_state: EINVAL for down unless up, for up unless down.
+
+    @coming: the states a transition still passes, one per read.
+    """
+
+    coming: list[str] = field(default_factory=list)
+    accepted: list[str] = field(default_factory=list)
+
+    def read(self, path: str) -> str:
+        if path.endswith("/link_state") and self.coming:
+            self.path(path).write_text(self.coming.pop(0))
+        return super().read(path)
+
+    def write(self, path: str, value: str) -> None:
+        if path.endswith("/link_state"):
+            state = self.path(path).read_text()
+            ready = "Link Up" if value == "down" else "Link Down"
+            if not state.startswith(ready) or self.coming:
+                raise OSError(errno.EINVAL, "Invalid argument")
+            self.accepted.append(value)
+            value = "Link Down" if value == "down" else "Link Up - Ready"
+        super().write(path, value)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def lpfc_fault(tmp_path: Path) -> tuple[LpfcSystem, FcLinkFault, Path, Clock]:
+    system = LpfcSystem(root=tmp_path)
+    system.add_scsi_host("host3", "lpfc")
+    clock = Clock()
+    fault = FcLinkFault(system, "host3", clock=clock, sleep=clock.sleep)
+    return system, fault, system.path("/sys/class/scsi_host/host3/link_state"), clock
+
+
+def test_fc_link_down_and_up_twice(tmp_path: Path) -> None:
+    _, fault, state, _ = lpfc_fault(tmp_path)
+
+    fault.down()
+    fault.down()  # a held fault put down again
+    assert state.read_text() == "Link Down"
+    fault.up()
+    fault.up()  # a fault someone else put up already
+    assert state.read_text() == "Link Up - Ready"
+
+
+def test_fc_link_up_while_it_still_goes_down(tmp_path: Path) -> None:
+    system, fault, state, clock = lpfc_fault(tmp_path)
+    # down was asked for, the link still shows up for a while
+    system.coming = ["Link Up - Ready"] * 3 + ["Link Down"]
+
+    fault.up()
+
+    # not taken for up: asked again once the link was down
+    assert system.coming == [] and system.accepted == ["up"]
+    assert state.read_text() == "Link Up - Ready"
+    assert clock.now < 5
+
+
+def test_fc_link_down_while_it_still_comes_up(tmp_path: Path) -> None:
+    system, fault, state, _ = lpfc_fault(tmp_path)
+    state.write_text("Link Down")
+    system.coming = ["Link Down"] * 3 + ["Link Up - Discovery", "Link Up - Ready"]
+
+    fault.down()
+
+    assert system.coming == [] and system.accepted == ["down"]
+    assert state.read_text() == "Link Down"
+
+
+def test_fc_link_that_never_gets_there_is_an_error(tmp_path: Path) -> None:
+    _, fault, state, clock = lpfc_fault(tmp_path)
+    state.write_text("HBA ERROR")
+    with pytest.raises(FaultError, match="stays 'HBA ERROR'"):
+        fault.up()
+    assert clock.now >= 30

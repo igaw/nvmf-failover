@@ -7,9 +7,12 @@ link reset) has no down state: it breaks and mends in one go.
 
 from __future__ import annotations
 
+import errno
 import json
 import re
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from .brocade import BrocadeError, Connect, find_port, set_port
@@ -52,13 +55,25 @@ def _scsi_host(name: str) -> str:
     return name
 
 
+# Seconds a link state must hold to count, and to wait for one at most
+LINK_SETTLE = 5.0
+LINK_TIMEOUT = 30.0
+
+
 class FcLinkFault(Fault):
     """Take the link of an lpfc port down and up (scsi_host link_state)."""
 
     kind = "fc-link"
 
-    def __init__(self, system: System, host: str) -> None:
+    def __init__(
+        self,
+        system: System,
+        host: str,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.system, self.host = system, _scsi_host(host)
+        self.clock, self.sleep = clock, sleep
         driver = system.read(f"/sys/class/scsi_host/{host}/proc_name")
         if driver != "lpfc":
             raise FaultError(
@@ -71,10 +86,42 @@ class FcLinkFault(Fault):
         return self.host
 
     def down(self) -> None:
-        self.system.write(f"/sys/class/scsi_host/{self.host}/link_state", "down")
+        self._set("down", "Link Down")
 
     def up(self) -> None:
-        self.system.write(f"/sys/class/scsi_host/{self.host}/link_state", "up")
+        self._set("up", "Link Up")
+
+    def _set(self, value: str, done: str) -> None:
+        """lpfc refuses (EINVAL) down unless the link is up, and up unless
+        it is down; while it changes, it still shows the old state. A link
+        that stays where it should be is no error; one that is still on its
+        way is asked again."""
+        attr = f"/sys/class/scsi_host/{self.host}/link_state"
+        deadline = self.clock() + LINK_TIMEOUT
+        while True:
+            try:
+                self.system.write(attr, value)
+                return
+            except OSError as err:
+                if err.errno != errno.EINVAL:
+                    raise
+            if self._stays(attr, done):
+                return
+            if self.clock() >= deadline:
+                raise FaultError(
+                    f"{self.key}: link stays {self.system.read(attr)!r}, "
+                    f"can't set it {value}"
+                )
+            self.sleep(0.5)
+
+    def _stays(self, attr: str, done: str) -> bool:
+        """Whether the link shows @done for LINK_SETTLE seconds."""
+        end = self.clock() + LINK_SETTLE
+        while self.system.read(attr).startswith(done):
+            if self.clock() >= end:
+                return True
+            self.sleep(0.5)
+        return False
 
 
 class FcLipFault(Fault):
