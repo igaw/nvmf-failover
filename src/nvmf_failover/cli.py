@@ -34,7 +34,7 @@ def _hostnqn(system: System) -> str:
     return system.read("/etc/nvme/hostnqn")
 
 
-def _inventory(
+def inventory(
     cfg: config_mod.Config, shell: Shell | None, hostnqn: str, system: System
 ) -> Inventory:
     """What every configured array knows about this host."""
@@ -52,7 +52,7 @@ def _inventory(
 
 
 @contextlib.contextmanager
-def _context(
+def open_context(
     cfg: config_mod.Config, system: System, with_inventory: bool = False
 ) -> Iterator[scenario_mod.Context]:
     """What building faults needs; the connections are closed afterwards."""
@@ -60,7 +60,7 @@ def _context(
     shell: OntapShell | None = OntapShell(cfg.ontap) if cfg.ontap else None
     try:
         inv = (
-            _inventory(cfg, shell, _hostnqn(system), system) if with_inventory else None
+            inventory(cfg, shell, _hostnqn(system), system) if with_inventory else None
         )
         yield scenario_mod.Context(
             system,
@@ -96,7 +96,7 @@ def cmd_discover(args: argparse.Namespace, system: System) -> int:
     hostnqn = args.hostnqn or _hostnqn(system)
     shell = OntapShell(cfg.ontap) if cfg.ontap else None
     try:
-        inv = _inventory(cfg, shell, hostnqn, system)
+        inv = inventory(cfg, shell, hostnqn, system)
     finally:
         if shell:
             shell.close()
@@ -170,7 +170,7 @@ def _interrupt(signum: int, frame: FrameType | None) -> None:
     raise KeyboardInterrupt(f"signal {signum}")
 
 
-def _load_scenario(path: Path) -> dict[str, object]:
+def load_scenario(path: Path) -> dict[str, object]:
     try:
         data: dict[str, object] = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as err:
@@ -178,7 +178,7 @@ def _load_scenario(path: Path) -> dict[str, object]:
     return data
 
 
-def _plan(
+def plan_for(
     data: dict[str, object], where: str, ctx: scenario_mod.Context, system: System
 ) -> resolve.Plan:
     """The rounds of a descriptive scenario, on this host."""
@@ -193,12 +193,12 @@ def _plan(
 
 def cmd_plan(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
-    data = _load_scenario(args.scenario)
+    data = load_scenario(args.scenario)
     if not resolve.is_described(data):
         print("not a descriptive scenario (no [[phase]])", file=sys.stderr)
         return 2
-    with _context(cfg, system, with_inventory=True) as ctx:
-        print("\n".join(_plan(data, str(args.scenario), ctx, system).lines()))
+    with open_context(cfg, system, with_inventory=True) as ctx:
+        print("\n".join(plan_for(data, str(args.scenario), ctx, system).lines()))
     return 0
 
 
@@ -226,7 +226,7 @@ def _load_jobs(args: argparse.Namespace, system: System, nqns: list[str]) -> lis
 
 def cmd_run(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
-    data = _load_scenario(args.scenario)
+    data = load_scenario(args.scenario)
     described = resolve.is_described(data)
     out = args.run_dir or args.out / time.strftime(
         f"%Y%m%d-%H%M%S-{args.scenario.stem}"
@@ -246,9 +246,9 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
 
     signal.signal(signal.SIGTERM, _interrupt)
     failures: list[str] = []
-    with _context(cfg, system, with_inventory=True) as ctx:
+    with open_context(cfg, system, with_inventory=True) as ctx:
         if described:
-            plan = _plan(data, str(args.scenario), ctx, system)
+            plan = plan_for(data, str(args.scenario), ctx, system)
             name, recover_timeout = plan.name, plan.recover_timeout
             baseline = {
                 p.ctrl.identity: [p.ctrl.name]

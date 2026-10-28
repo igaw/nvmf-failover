@@ -146,7 +146,7 @@ def _setup(
     scen.write_text(SCENARIO)
     # the tests use no ONTAP: discovery comes from a fixed inventory
     monkeypatch.setattr(
-        "nvmf_failover.cli._inventory", lambda cfg, shell, nqn, system: inventory()
+        "nvmf_failover.cli.inventory", lambda cfg, shell, nqn, system: inventory()
     )
     return cfg, scen
 
