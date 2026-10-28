@@ -10,6 +10,7 @@ from nvmf_failover.faults import (
     FaultError,
     FcLinkFault,
     FcLipFault,
+    OntapLifFault,
     PciUnbindFault,
     TcpPortFault,
 )
@@ -155,6 +156,55 @@ def test_specs_build_the_same_fault(system: FakeSystem) -> None:
         TcpPortFault(system, "10.0.0.1", 4421),
     ):
         assert make_fault(fault.spec(), Context(system)).key == fault.key
+
+
+HOSTS = """\
+vserver   subsystem host-nqn
+--------- --------- -------------
+svm-mine  sub-a     nqn.host:mine
+svm-mixed sub-b     nqn.host:mine
+svm-mixed sub-c     nqn.host:other
+3 entries were displayed.
+"""
+
+
+class Cluster:
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    def run(self, command: str) -> str:
+        self.commands.append(command)
+        if command.startswith("vserver nvme subsystem host show"):
+            vserver = command.split()[6]
+            rows = [r for r in HOSTS.splitlines()[2:5] if r.startswith(vserver + " ")]
+            return "\n".join([*HOSTS.splitlines()[:2], *rows]) + "\n"
+        return ""
+
+
+def test_lif_down_in_a_vserver_of_this_host_only() -> None:
+    cluster = Cluster()
+    OntapLifFault(cluster, "svm-mine", "lif1", "nqn.host:mine").down()
+    assert cluster.commands[-1] == (
+        "network interface modify -vserver svm-mine -lif lif1 -status-admin down"
+    )
+
+
+def test_lif_down_refused_in_a_shared_vserver() -> None:
+    cluster = Cluster()
+    fault = OntapLifFault(cluster, "svm-mixed", "lif1", "nqn.host:mine")
+    with pytest.raises(FaultError, match=r"svm-mixed also serves 1 other host"):
+        fault.down()
+    assert not any("modify" in c for c in cluster.commands)
+    # putting it up is never refused
+    fault.up()
+    assert "-status-admin up" in cluster.commands[-1]
+    OntapLifFault(cluster, "svm-mixed", "lif1", "nqn.host:mine", force=True).down()
+    assert "-status-admin down" in cluster.commands[-1]
+
+
+def test_lif_down_without_a_host_nqn_is_refused() -> None:
+    with pytest.raises(FaultError, match="other host"):
+        OntapLifFault(Cluster(), "svm-mine", "lif1", "").down()
 
 
 @dataclass

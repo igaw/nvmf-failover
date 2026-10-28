@@ -374,7 +374,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--force",
         action="store_true",
-        help="for brocade-port: disable a port other WWPNs use too",
+        help="for brocade-port: disable a port other WWPNs use too; for "
+        "ontap-lif: a LIF of a vserver that serves other hosts too",
     )
     s.set_defaults(func=cmd_fault)
 

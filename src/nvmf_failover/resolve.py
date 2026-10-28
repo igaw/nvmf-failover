@@ -240,7 +240,7 @@ def _target_fault(ctx: Context, tp: TargetPort, allow_shared: bool) -> Fault:
     if tp.array == "netapp":
         if ctx.shell is None:
             raise FaultError("a NetApp port needs [ontap] in the configuration")
-        return OntapLifFault(ctx.shell, tp.group, tp.name)
+        return OntapLifFault(ctx.shell, tp.group, tp.name, ctx.hostnqn(), allow_shared)
     return _switch_fault(ctx, tp.address, allow_shared)
 
 

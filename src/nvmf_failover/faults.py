@@ -29,7 +29,7 @@ from .brocade import (
     set_port,
 )
 from .config import BrocadeConfig
-from .ontap import Shell, lif_admin
+from .ontap import Shell, lif_admin, vserver_hosts
 from .system import System
 
 
@@ -225,23 +225,51 @@ class PciUnbindFault(Fault):
 
 
 class OntapLifFault(Fault):
-    """Set a LIF of the array administratively down and up."""
+    """Set a LIF of the array administratively down and up.
+
+    A LIF serves every host of its vserver. down() refuses a vserver whose
+    subsystems list other hosts than @hostnqn unless @force: their paths
+    would break too.
+    """
 
     kind = "ontap-lif"
 
-    def __init__(self, shell: Shell, vserver: str, lif: str) -> None:
+    def __init__(
+        self,
+        shell: Shell,
+        vserver: str,
+        lif: str,
+        hostnqn: str = "",
+        force: bool = False,
+    ) -> None:
         if not vserver:
             raise FaultError(f"{lif}: no vserver given or configured")
         self.shell, self.vserver, self.lif = shell, vserver, lif
+        self.hostnqn, self.force = hostnqn, force
 
     @property
     def target(self) -> str:
         return f"{self.vserver}/{self.lif}"
 
     def spec(self) -> dict[str, Any]:
-        return {"fault": self.kind, "vserver": self.vserver, "lif": self.lif}
+        return {
+            "fault": self.kind,
+            "vserver": self.vserver,
+            "lif": self.lif,
+            "force": self.force,
+        }
 
     def down(self) -> None:
+        if not self.force:
+            others = sorted(
+                set(vserver_hosts(self.shell, self.vserver)) - {self.hostnqn}
+            )
+            if others:
+                raise FaultError(
+                    f"{self.vserver} also serves {len(others)} other host(s) "
+                    f"({', '.join(others[:4])}{', ...' if len(others) > 4 else ''})"
+                    ": set force to take its LIF down anyway"
+                )
         lif_admin(self.shell, self.vserver, self.lif, up=False)
 
     def up(self) -> None:

@@ -86,6 +86,12 @@ class Context:
     switches: list[BrocadeConfig] = field(default_factory=list)
     connect: Connect | None = None
 
+    def hostnqn(self) -> str:
+        """This host's NQN: what a LIF fault may break without force."""
+        if self.inventory and self.inventory.hostnqn:
+            return self.inventory.hostnqn
+        return self.system.read("/etc/nvme/hostnqn")
+
 
 def load(path: Path) -> Scenario:
     try:
@@ -155,7 +161,7 @@ def fault_raw(
     if kind == "ontap-lif":
         if "/" in target and not vserver:
             vserver, _, target = target.partition("/")
-        raw["lif"] = target
+        raw |= {"lif": target, "force": force}
         if vserver:
             raw["vserver"] = vserver
     elif kind == "brocade-port":
@@ -206,7 +212,13 @@ def make_fault(raw: dict[str, Any], ctx: Context) -> Fault:
     if kind == "ontap-lif":
         if ctx.shell is None:
             raise FaultError("ontap-lif needs [ontap] in the configuration")
-        return OntapLifFault(ctx.shell, raw.get("vserver", ctx.vserver), raw["lif"])
+        return OntapLifFault(
+            ctx.shell,
+            raw.get("vserver", ctx.vserver),
+            raw["lif"],
+            ctx.hostnqn(),
+            bool(raw.get("force", False)),
+        )
     raise FaultError(f"{kind}: not a single fault")
 
 
@@ -229,7 +241,13 @@ def expand(raws: list[dict[str, Any]], ctx: Context) -> list[Step]:
         if not lifs:
             raise FaultError(f"{vserver}: no LIF of it carries a path of this host")
         for lif in lifs:
-            fault = OntapLifFault(ctx.shell, lif.vserver, lif.name)
+            fault = OntapLifFault(
+                ctx.shell,
+                lif.vserver,
+                lif.name,
+                ctx.hostnqn(),
+                bool(raw.get("force", False)),
+            )
             steps += [Step(fault, "down", hold), Step(fault, "up", hold)]
     return steps
 

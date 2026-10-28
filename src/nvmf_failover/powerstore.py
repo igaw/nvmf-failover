@@ -1,7 +1,9 @@
 """Dell PowerStore, over its REST API: the host's volumes and the FC ports.
 
-PowerStore has no call to take an FC port down; break its paths with the
-brocade-port fault on the switch port of a wwn_nvme instead.
+PowerStore has no call to take a port down: its REST API (3.0) modifies
+only the requested speed of an FC or Ethernet port, and the usages of an
+IP port. Break its paths with the brocade-port fault on the switch port
+of a wwn_nvme instead.
 """
 
 from __future__ import annotations

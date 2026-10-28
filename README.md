@@ -16,7 +16,9 @@ NVMe-oF host.
   - `fc-lip`: reset the link of any FC port (`issue_lip`).
   - `pci-unbind`: unbind an HBA port's PCI function and bind it again, for
     drivers without a link control (qla2xxx).
-  - `ontap-lif`: set a NetApp ONTAP LIF administratively down and up.
+  - `ontap-lif`: set a NetApp ONTAP LIF administratively down and up. A
+    LIF serves every host of its vserver: a vserver whose subsystems list
+    other hosts too is refused unless `force = true`.
   - `ontap-lif-cycle`: every LIF of a vserver that carries a path of this
     host, one after the other.
   - `tcp-port`: drop what a TCP target port sends (nftables, in its own
@@ -24,7 +26,8 @@ NVMe-oF host.
   - `brocade-port`: disable and enable the Brocade switch port a WWPN is
     logged in through, found in the switches' name servers. A port that
     other WWPNs use too (an array port with other hosts' NPIV logins) is
-    refused unless `force = true`.
+    refused unless `force = true`. This is also the way to take a
+    PowerStore port down: its REST API has no call for it.
 - **Monitoring** during a run: controller states per identity, ANA states
   per path, the nvme-discoverd journal, optionally fio I/O on a namespace.
 - **A verdict** at the end, compared with the state before the run.

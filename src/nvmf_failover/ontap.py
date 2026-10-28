@@ -55,6 +55,17 @@ def lif_admin(shell: Shell, vserver: str, lif: str, up: bool) -> None:
     )
 
 
+def vserver_hosts(shell: Shell, vserver: str) -> list[str]:
+    """The host NQNs the subsystems of @vserver list."""
+    rows = parse_fields(
+        shell.run(
+            f"vserver nvme subsystem host show -vserver {vserver} "
+            "-fields vserver,subsystem,host-nqn"
+        )
+    )
+    return sorted({row["host-nqn"] for row in rows if row.get("host-nqn")})
+
+
 def parse_fields(text: str) -> list[dict[str, str]]:
     """Rows of a 'show -fields ...' table: the header, a dashes line, rows.
 

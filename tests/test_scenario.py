@@ -192,8 +192,8 @@ def test_shipped_scenarios_parse(path: Path) -> None:
     ("kind", "target", "expected"),
     [
         ("fc-link", "host3", {"host": "host3"}),
-        ("ontap-lif", "lif1", {"lif": "lif1"}),
-        ("ontap-lif", "svm/lif1", {"lif": "lif1", "vserver": "svm"}),
+        ("ontap-lif", "lif1", {"lif": "lif1", "force": False}),
+        ("ontap-lif", "svm/lif1", {"lif": "lif1", "force": False, "vserver": "svm"}),
         ("brocade-port", "20:17", {"wwpn": "20:17", "force": False}),
         ("tcp-port", "10.0.0.1:4421", {"address": "10.0.0.1", "port": "4421"}),
         ("tcp-port", "10.0.0.1", {"address": "10.0.0.1", "port": "4420"}),
