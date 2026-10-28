@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Protocol
 
 from . import ssh
@@ -25,9 +26,12 @@ class OntapShell:
 
     def __init__(self, cfg: OntapConfig) -> None:
         self._client = ssh.connect(cfg.host, cfg.user, cfg.password)
+        # the faults of a round run at once: one command at a time
+        self._lock = threading.Lock()
 
     def run(self, command: str) -> str:
-        out, err = ssh.run(self._client, command)
+        with self._lock:
+            out, err = ssh.run(self._client, command)
         text = out + err
         if any(marker in text for marker in _ERROR_MARKERS):
             raise OntapError(f"{command}: {text.strip()}")

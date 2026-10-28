@@ -9,6 +9,7 @@ number from a file.
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -104,6 +105,8 @@ class BrocadeShell:
         import paramiko
 
         self.name = cfg.name
+        # the faults of a round run at once: one command at a time per switch
+        self._lock = threading.Lock()
         accounts = [(cfg.user, cfg.password)]
         if not admin and cfg.read_user:
             accounts.insert(0, cfg.reader())
@@ -118,7 +121,8 @@ class BrocadeShell:
                 print(f"{cfg.name}: login as {user} failed, using {cfg.user}")
 
     def run(self, command: str) -> str:
-        out, err = ssh.run(self._client, command)
+        with self._lock:
+            out, err = ssh.run(self._client, command)
         err = err.strip()
         if err and ("rbash" in err or "not permitted" in err.lower()):
             raise BrocadeError(f"{self.name}: {command}: {err}")
@@ -185,13 +189,15 @@ class SwitchPool:
 
     def __init__(self) -> None:
         self._shells: dict[str, BrocadeShell] = {}
+        self._lock = threading.Lock()
 
     def __call__(self, cfg: BrocadeConfig) -> Shell:
-        shell = self._shells.get(cfg.name)
-        if shell is None or not shell.alive:
-            shell = BrocadeShell(cfg, admin=True)
-            self._shells[cfg.name] = shell
-        return shell
+        with self._lock:
+            shell = self._shells.get(cfg.name)
+            if shell is None or not shell.alive:
+                shell = BrocadeShell(cfg, admin=True)
+                self._shells[cfg.name] = shell
+            return shell
 
     def close(self) -> None:
         for shell in self._shells.values():

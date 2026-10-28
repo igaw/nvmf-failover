@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -63,12 +64,11 @@ def test_execute_rounds_and_gaps() -> None:
     unrecovered = execute(
         plan(rounds), runner, lambda s: log.append(f"sleep {s:g}"), wait, lambda t: None
     )
-    assert log == [
-        "down a",
-        "down b",
+    # the faults of a round are applied at once, in no particular order
+    assert sorted(log[:2]) == ["down a", "down b"]
+    assert sorted(log[3:5]) == ["up a", "up b"]
+    assert log[2:3] + log[5:] == [
         "sleep 10",
-        "up b",
-        "up a",
         "sleep 5",
         "down a",
         "sleep 20",
@@ -90,7 +90,7 @@ def test_execute_restores_on_failure() -> None:
             lambda t: True,
             lambda t: None,
         )
-    assert log[-2:] == ["up boom", "up a"]
+    assert sorted(log[-2:]) == ["up a", "up boom"]
 
 
 def test_expectation_failures() -> None:
@@ -190,3 +190,33 @@ def test_run_described_passes_and_restores(
     ]
     assert "round 2/2: host-port host3" in texts
     assert "down fc-link:host3" in texts and "up fc-link:host3" in texts
+
+
+class Slow(Recorder):
+    def down(self) -> None:
+        time.sleep(0.3)  # an lpfc link takes seconds to go down
+        super().down()
+
+    def up(self) -> None:
+        time.sleep(0.3)
+        super().up()
+
+
+def test_execute_applies_the_faults_of_a_round_at_once() -> None:
+    log: list[str] = []
+    faults = tuple(Slow(n, log) for n in "abcd")
+    runner = Runner(sleep=lambda s: None, log=lambda t: None)
+    start = time.monotonic()
+
+    execute(
+        plan([Round(1, "all", faults, (), 0, 0)]),
+        runner,
+        lambda s: None,
+        lambda t: True,
+        lambda t: None,
+    )
+
+    # four downs and four ups of 0.3 s each, not 2.4 s one after the other
+    assert time.monotonic() - start < 1.2
+    assert sorted(log) == sorted([f"{a} {n}" for a in ("down", "up") for n in "abcd"])
+    assert runner.down == {}

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from .faults import Fault
 from .load import LoadResult
 from .resolve import Expect, Plan
 from .scenario import Runner, Step
@@ -49,6 +51,22 @@ class Observer:
 Wait = Callable[[float], bool]  # wait up to N seconds for recovery
 
 
+def apply_all(runner: Runner, faults: Sequence[Fault], action: str) -> None:
+    """@action on every fault of a round at once.
+
+    Putting an lpfc link down takes 5 s: one after the other, the first
+    of four links would be down 15 s longer than the round says, past
+    dev_loss_tmo where the round meant to stay below it.
+    """
+    if len(faults) == 1:
+        runner.apply(Step(faults[0], action, 0))
+        return
+    with ThreadPoolExecutor(max_workers=len(faults)) as pool:
+        done = [pool.submit(runner.apply, Step(f, action, 0)) for f in faults]
+    for future in done:
+        future.result()  # the first error, after every fault was tried
+
+
 def execute(
     plan: Plan,
     runner: Runner,
@@ -61,11 +79,9 @@ def execute(
     try:
         for i, rnd in enumerate(plan.rounds, start=1):
             log(f"round {i}/{len(plan.rounds)}: {rnd.label}")
-            for fault in rnd.faults:
-                runner.apply(Step(fault, "down", 0))
+            apply_all(runner, rnd.faults, "down")
             sleep(rnd.duration)
-            for fault in reversed(rnd.faults):
-                runner.apply(Step(fault, "up", 0))
+            apply_all(runner, rnd.faults, "up")
             if rnd.gap is None:
                 if not wait(plan.recover_timeout):
                     log(

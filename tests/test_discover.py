@@ -1,3 +1,5 @@
+import threading
+
 from nvmf_failover.discover import Lif, discover, lif_matches
 from nvmf_failover.ontap import OntapError, OntapShell, lif_admin, parse_fields
 from nvmf_failover.topology import controllers
@@ -112,6 +114,7 @@ def test_lif_admin_sends_the_state() -> None:
 def test_ontap_errors_on_stdout_raise() -> None:
     # OntapShell.run checks the output; exercise the check without ssh
     shell = OntapShell.__new__(OntapShell)
+    shell._lock = threading.Lock()
 
     class Stream:
         def __init__(self, data: bytes) -> None:
