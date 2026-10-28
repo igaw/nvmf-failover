@@ -340,6 +340,25 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
     return 0 if result_v.passed and not interrupted else 1
 
 
+def cmd_mcp(args: argparse.Namespace, system: System) -> int:
+    from . import mcp
+    from .mcp.server import Options
+
+    return mcp.serve(
+        Options(
+            config=config_mod.load(args.config),
+            config_path=args.config.expanduser().resolve() if args.config else None,
+            scenarios=args.scenarios.resolve(),
+            out=args.out.resolve(),
+            state=args.state.expanduser(),
+            max_hold=args.max_hold,
+            allow_force=args.allow_force,
+            allow_io_verify=args.allow_io_verify,
+        ),
+        system,
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="nvmf-failover", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -429,6 +448,47 @@ def parser() -> argparse.ArgumentParser:
         help="don't follow the nvme-discoverd journal",
     )
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser(
+        "mcp",
+        help="serve faults and scenario runs to an agent (MCP on stdin/stdout)",
+    )
+    s.add_argument(
+        "--scenarios",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "scenarios",
+        help="the scenarios run_start accepts (default: those of the checkout)",
+    )
+    s.add_argument(
+        "--out",
+        type=Path,
+        default=Path("runs"),
+        help="directory for the run logs (default ./runs)",
+    )
+    s.add_argument(
+        "--state",
+        type=Path,
+        default=Path("~/.local/state/nvmf-failover/held-faults.json"),
+        help="the faults held down, restored when a killed server starts again",
+    )
+    s.add_argument(
+        "--max-hold",
+        type=float,
+        metavar="SECONDS",
+        help="longest a fault may be held down (default: the longest kernel "
+        "timer + 120s, or 600s)",
+    )
+    s.add_argument(
+        "--allow-force",
+        action="store_true",
+        help="let the agent disable switch ports other WWPNs use too",
+    )
+    s.add_argument(
+        "--allow-io-verify",
+        action="store_true",
+        help="let the agent run write-and-verify I/O (destroys data)",
+    )
+    s.set_defaults(func=cmd_mcp)
     return p
 
 

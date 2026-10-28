@@ -131,6 +131,45 @@ each a fault on a named target (`host = "host3"`, `lif = "..."`), an action
 (down, up, bounce) and a hold time. It is still supported, for what the
 descriptive form can't say.
 
+## Agents (MCP)
+
+`nvmf-failover mcp` serves the faults and the scenario runs to an agent,
+as an MCP server on stdin and stdout. It runs on the test host as root;
+the agent's client starts it over ssh:
+
+    {"command": "ssh", "args": ["root@host", "/root/nvmf-failover/nvmf-failover", "mcp"]}
+
+It only breaks things. To watch what the host does meanwhile, run
+nvme-mcp (nvme-cli `scripts/mcp`) next to it and start its `nvme_watch`
+in parallel with the fault.
+
+Tools: `status`, `discover`, `list_scenarios`, `plan`, `fault`,
+`restore_all`, `run_start`, `run_status`, `run_stop`, `run_report`,
+`list_runs`.
+
+What keeps the host safe:
+
+- `fault` takes only ports `discover` lists, and the scenarios in
+  `--scenarios` (default: those of the checkout).
+- A fault put down is held for `hold_seconds` (a number or an expression
+  like `"dev_loss_tmo + 10s"`), then the server puts it up. The longest
+  hold is `--max-hold`, by default the longest kernel timer of the host +
+  120 s (600 s if none can be read).
+- When the client is gone (stdin ends, the ssh session drops) or the
+  server gets SIGTERM, SIGHUP or SIGINT, it puts up every fault it holds.
+  The held faults are kept in `--state`
+  (`~/.local/state/nvmf-failover/held-faults.json`): a server that was
+  killed outright puts them up when it starts again. One server runs at a
+  time.
+- A scenario run is a `nvmf-failover run` in its own systemd unit
+  (`nvmf-failover-ID`), its logs in `--out` (default `./runs`). It goes on
+  when the client disconnects, restores its own faults as `run` always
+  does, and is found again with `list_runs`. A run and faults held by
+  hand never overlap.
+- Switch ports other hosts use too (`force`) and write-and-verify I/O
+  (`io_verify`) need `--allow-force` and `--allow-io-verify`.
+- Credentials only come from the configuration file.
+
 ## Development
 
     python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
