@@ -3,6 +3,10 @@
 A fault has a target and two states. down() breaks the path, up() mends
 it; up() of a fault that isn't down does nothing harmful. A bounce (a
 link reset) has no down state: it breaks and mends in one go.
+
+spec() gives the step that builds the same fault again without looking
+anything up: while a fault is down, what it was found by may be gone (a
+disabled switch port's logins, an unbound HBA's SCSI host).
 """
 
 from __future__ import annotations
@@ -14,8 +18,16 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from .brocade import BrocadeError, Connect, find_port, set_port
+from .brocade import (
+    BrocadeError,
+    Connect,
+    find_port,
+    named_port_users,
+    normalize_wwpn,
+    set_port,
+)
 from .config import BrocadeConfig
 from .ontap import Shell, lif_admin
 from .system import System
@@ -36,6 +48,10 @@ class Fault(ABC):
     def key(self) -> str:
         return f"{self.kind}:{self.target}"
 
+    def spec(self) -> dict[str, Any]:
+        """The step that builds this very fault again, without lookups."""
+        raise FaultError(f"{self.key}: can't be built again")
+
     def down(self) -> None:
         raise FaultError(f"{self.key}: has no down state, use bounce")
 
@@ -47,6 +63,9 @@ class Fault(ABC):
 
     def __repr__(self) -> str:
         return f"<{self.key}>"
+
+
+_PCI = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d")
 
 
 def _scsi_host(name: str) -> str:
@@ -84,6 +103,9 @@ class FcLinkFault(Fault):
     @property
     def target(self) -> str:
         return self.host
+
+    def spec(self) -> dict[str, Any]:
+        return {"fault": self.kind, "host": self.host}
 
     def down(self) -> None:
         self._set("down", "Link Down")
@@ -138,6 +160,9 @@ class FcLipFault(Fault):
     def target(self) -> str:
         return self.host
 
+    def spec(self) -> dict[str, Any]:
+        return {"fault": self.kind, "host": self.host}
+
     def bounce(self) -> None:
         self.system.write(f"/sys/class/fc_host/{self.host}/issue_lip", "1")
 
@@ -151,28 +176,44 @@ class PciUnbindFault(Fault):
 
     kind = "pci-unbind"
 
-    def __init__(self, system: System, host: str) -> None:
+    def __init__(
+        self, system: System, host: str, pci: str = "", driver: str = ""
+    ) -> None:
         self.system, self.host = system, _scsi_host(host)
+        if pci or driver:
+            # from spec(): the SCSI host is gone while the function is unbound
+            if not _PCI.fullmatch(pci) or not re.fullmatch(r"[\w-]+", driver):
+                raise FaultError(f"{host}: bad PCI function {pci!r} or driver")
+            self.pci, self.driver = pci, driver
+            return
         dev = system.path(f"/sys/class/scsi_host/{host}/device")
-        pci = next(
+        function = next(
             (
                 p
                 for p in [dev.resolve(), *dev.resolve().parents]
-                if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d", p.name)
+                if _PCI.fullmatch(p.name)
             ),
             None,
         )
-        if pci is None:
+        if function is None:
             raise FaultError(f"{host}: no PCI device")
-        self.pci = pci.name
-        driver = system.path(f"/sys/bus/pci/devices/{self.pci}/driver")
-        self.driver = Path(driver.resolve()).name if driver.exists() else ""
+        self.pci = function.name
+        link = system.path(f"/sys/bus/pci/devices/{self.pci}/driver")
+        self.driver = Path(link.resolve()).name if link.exists() else ""
         if not self.driver:
             raise FaultError(f"{host}: {self.pci} has no driver")
 
     @property
     def target(self) -> str:
         return self.host
+
+    def spec(self) -> dict[str, Any]:
+        return {
+            "fault": self.kind,
+            "host": self.host,
+            "pci": self.pci,
+            "driver": self.driver,
+        }
 
     def down(self) -> None:
         self.system.write(f"/sys/bus/pci/drivers/{self.driver}/unbind", self.pci)
@@ -196,6 +237,9 @@ class OntapLifFault(Fault):
     @property
     def target(self) -> str:
         return f"{self.vserver}/{self.lif}"
+
+    def spec(self) -> dict[str, Any]:
+        return {"fault": self.kind, "vserver": self.vserver, "lif": self.lif}
 
     def down(self) -> None:
         lif_admin(self.shell, self.vserver, self.lif, up=False)
@@ -222,6 +266,9 @@ class TcpPortFault(Fault):
     @property
     def target(self) -> str:
         return f"{self.address}:{self.port}"
+
+    def spec(self) -> dict[str, Any]:
+        return {"fault": self.kind, "address": self.address, "port": self.port}
 
     def _handles(self) -> list[int]:
         """The handles of this fault's rules."""
@@ -319,13 +366,21 @@ class BrocadePortFault(Fault):
         connect: Connect,
         wwpn: str,
         force: bool = False,
+        switch: str = "",
+        port: int | None = None,
     ) -> None:
         try:
-            self.switch, entry, users = find_port(switches, connect, wwpn)
+            if switch and port is not None:
+                # from spec(): a disabled port has no logins to find it by
+                self.switch, users = named_port_users(switches, connect, switch, port)
+                self.wwpn, self.port = normalize_wwpn(wwpn), port
+            else:
+                self.switch, entry, users = find_port(switches, connect, wwpn)
+                self.wwpn, self.port = entry.wwpn, entry.port_index
         except BrocadeError as err:
             raise FaultError(str(err)) from err
-        self.connect, self.wwpn, self.port = connect, entry.wwpn, entry.port_index
-        others = [u.wwpn for u in users if u.wwpn != entry.wwpn]
+        self.connect, self.force = connect, force
+        others = [u.wwpn for u in users if u.wwpn != self.wwpn]
         if others and not force:
             raise FaultError(
                 f"{self.switch.name} port {self.port} also carries "
@@ -338,6 +393,15 @@ class BrocadePortFault(Fault):
     @property
     def target(self) -> str:
         return f"{self.switch.name}/{self.port}({self.wwpn})"
+
+    def spec(self) -> dict[str, Any]:
+        return {
+            "fault": self.kind,
+            "wwpn": self.wwpn,
+            "switch": self.switch.name,
+            "port": self.port,
+            "force": self.force,
+        }
 
     def down(self) -> None:
         set_port(self.connect(self.switch), self.port, enable=False)

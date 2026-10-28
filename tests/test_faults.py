@@ -1,5 +1,6 @@
 import errno
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from nvmf_failover.faults import (
     PciUnbindFault,
     TcpPortFault,
 )
+from nvmf_failover.scenario import Context, make_fault
 
 from conftest import FakeSystem
 
@@ -121,6 +123,38 @@ def test_tcp_port_ipv6_uses_ip6(system: FakeSystem, tmp_path: Path) -> None:
     TcpPortFault(system, "fd00::5", 4420).down()
     rule = next(c for c in system.commands if c[:3] == ["nft", "add", "rule"])
     assert rule[6:8] == ["ip6", "saddr"]
+
+
+def test_pci_unbind_comes_back_from_its_spec(system: FakeSystem) -> None:
+    _pci_host(system, "host4", "0000:81:00.1", "qla2xxx")
+    fault = PciUnbindFault(system, "host4")
+    spec = fault.spec()
+    fault.down()
+    # unbound: the SCSI host and the driver link are gone
+    shutil.rmtree(system.path("/sys/class/scsi_host/host4"))
+    system.path("/sys/bus/pci/devices/0000:81:00.1/driver").unlink()
+
+    again = make_fault(spec, Context(system))
+    again.up()
+
+    assert again.key == fault.key
+    bind = system.path("/sys/bus/pci/drivers/qla2xxx/bind")
+    assert bind.read_text() == "0000:81:00.1"
+
+
+def test_pci_unbind_spec_is_checked(system: FakeSystem) -> None:
+    with pytest.raises(FaultError, match="bad PCI function"):
+        PciUnbindFault(system, "host4", "../../x", "qla2xxx")
+
+
+def test_specs_build_the_same_fault(system: FakeSystem) -> None:
+    system.add_scsi_host("host3", "lpfc")
+    for fault in (
+        FcLinkFault(system, "host3"),
+        FcLipFault(system, "host3"),
+        TcpPortFault(system, "10.0.0.1", 4421),
+    ):
+        assert make_fault(fault.spec(), Context(system)).key == fault.key
 
 
 @dataclass

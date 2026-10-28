@@ -12,6 +12,8 @@ from nvmf_failover.brocade import (
 )
 from nvmf_failover.config import BrocadeConfig
 from nvmf_failover.faults import BrocadePortFault, FaultError
+from nvmf_failover.scenario import Context, make_fault
+from nvmf_failover.system import System
 
 # trimmed from a Brocade G620, Fabric OS v9.2.0
 SWITCHSHOW = """\
@@ -159,3 +161,37 @@ def test_port_fault_refuses_a_shared_port() -> None:
         _switches(), Fabric(), "10:00:00:10:9b:ee:0b:ab", force=True
     )
     assert forced.others == ["c0:50:76:0c:89:e2:00:02"]
+
+
+def test_port_fault_from_its_spec_finds_a_disabled_port() -> None:
+    fabric = Fabric()
+    fault = BrocadePortFault(_switches(), fabric, "10:00:00:10:9b:e5:d0:be")
+    spec = fault.spec()
+    assert spec == {
+        "fault": "brocade-port",
+        "wwpn": "10:00:00:10:9b:e5:d0:be",
+        "switch": "brc",
+        "port": 6,
+        "force": False,
+    }
+    fault.down()
+    # disabled: the WWPN logged out, the name server doesn't know it
+    fabric.shells["brc"] = EmptySwitch()
+
+    again = make_fault(spec, Context(System(), connect=fabric, switches=_switches()))
+    again.up()
+
+    assert again.key == fault.key
+    assert fabric.shells["brc"].commands[-1] == "portenable 6"
+
+
+def test_port_fault_spec_still_refuses_a_shared_port() -> None:
+    with pytest.raises(FaultError, match="other login"):
+        BrocadePortFault(
+            _switches(), Fabric(), "10:00:00:10:9b:ee:0b:ab", switch="brc", port=3
+        )
+
+
+def test_port_fault_spec_names_a_known_switch() -> None:
+    with pytest.raises(FaultError, match="not a configured switch"):
+        BrocadePortFault(_switches(), Fabric(), "10:00", switch="nope", port=1)

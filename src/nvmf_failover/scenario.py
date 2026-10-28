@@ -186,14 +186,22 @@ def make_fault(raw: dict[str, Any], ctx: Context) -> Fault:
     if kind == "fc-lip":
         return FcLipFault(ctx.system, raw["host"])
     if kind == "pci-unbind":
-        return PciUnbindFault(ctx.system, raw["host"])
+        return PciUnbindFault(
+            ctx.system, raw["host"], raw.get("pci", ""), raw.get("driver", "")
+        )
     if kind == "tcp-port":
         return TcpPortFault(ctx.system, raw["address"], int(raw.get("port", 4420)))
     if kind == "brocade-port":
         if ctx.connect is None or not ctx.switches:
             raise FaultError("brocade-port needs [[brocade]] in the configuration")
+        port = raw.get("port")
         return BrocadePortFault(
-            ctx.switches, ctx.connect, raw["wwpn"], bool(raw.get("force", False))
+            ctx.switches,
+            ctx.connect,
+            raw["wwpn"],
+            bool(raw.get("force", False)),
+            switch=str(raw.get("switch", "")),
+            port=int(port) if port is not None else None,
         )
     if kind == "ontap-lif":
         if ctx.shell is None:

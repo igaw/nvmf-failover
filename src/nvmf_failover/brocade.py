@@ -180,6 +180,16 @@ def find_port(
     raise BrocadeError(f"{wanted}: not logged in to {names}")
 
 
+def named_port_users(
+    switches: list[BrocadeConfig], connect: Connect, switch: str, port: int
+) -> tuple[BrocadeConfig, list[NameServerEntry]]:
+    """The switch named @switch, and what is logged in through its @port."""
+    cfg = next((c for c in switches if c.name == switch), None)
+    if cfg is None:
+        raise BrocadeError(f"{switch}: not a configured switch")
+    return cfg, port_users(connect(cfg), port)
+
+
 class SwitchPool:
     """One admin connection per switch, reopened when it dropped.
 
