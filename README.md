@@ -23,6 +23,10 @@ NVMe-oF host.
     host, one after the other.
   - `tcp-port`: drop what a TCP target port sends (nftables, in its own
     `inet nvmf_failover` table).
+  - `tcp-refuse`: refuse the host's connections to a TCP target port
+    (reject with a TCP reset, same table): a connect fails at once
+    instead of waiting for its SYN retries, as with a target port that is
+    gone, e.g. a path that is down while the host boots.
   - `brocade-port`: disable and enable the Brocade switch port a WWPN is
     logged in through, found in the switches' name servers. A port that
     other WWPNs use too (an array port with other hosts' NPIV logins) is

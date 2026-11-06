@@ -13,6 +13,7 @@ from nvmf_failover.faults import (
     OntapLifFault,
     PciUnbindFault,
     TcpPortFault,
+    TcpRefuseFault,
 )
 from nvmf_failover.scenario import Context, make_fault
 
@@ -126,6 +127,54 @@ def test_tcp_port_ipv6_uses_ip6(system: FakeSystem, tmp_path: Path) -> None:
     assert rule[6:8] == ["ip6", "saddr"]
 
 
+def test_tcp_refuse_rejects_in_the_output_hook(system: FakeSystem) -> None:
+    system.failing.add("nft list table inet nvmf_failover")
+    fault = TcpRefuseFault(system, "10.100.128.29", 4421)
+
+    fault.down()
+
+    adds = [c for c in system.commands if c[:2] == ["nft", "add"]]
+    assert adds[1][-1] == "{ type filter hook output priority -10 ; }"
+    assert adds[-1][:6] == ["nft", "add", "rule", "inet", "nvmf_failover", "output"]
+    assert adds[-1][6:] == [
+        "ip",
+        "daddr",
+        "10.100.128.29",
+        "tcp",
+        "dport",
+        "4421",
+        "reject",
+        "with",
+        "tcp",
+        "reset",
+        "comment",
+        '"tcp-refuse:10.100.128.29:4421"',
+    ]
+
+
+def test_tcp_refuse_up_without_its_chain(system: FakeSystem) -> None:
+    """A tcp-port fault made the table, but there is no output chain."""
+    system.failing.add("nft list chain inet nvmf_failover output")
+    system.answers["nft -j list table inet nvmf_failover"] = _nft_chain(
+        "tcp-port:10.100.128.29:4420"
+    )
+
+    TcpRefuseFault(system, "10.100.128.29", 4420).up()
+
+    assert not [c for c in system.commands if c[:2] == ["nft", "delete"]]
+
+
+def test_tcp_refuse_from_the_command_line() -> None:
+    from nvmf_failover.scenario import fault_raw
+
+    assert fault_raw("tcp-refuse", "10.0.0.1:4422", "down") == {
+        "fault": "tcp-refuse",
+        "action": "down",
+        "address": "10.0.0.1",
+        "port": "4422",
+    }
+
+
 def test_pci_unbind_comes_back_from_its_spec(system: FakeSystem) -> None:
     _pci_host(system, "host4", "0000:81:00.1", "qla2xxx")
     fault = PciUnbindFault(system, "host4")
@@ -154,6 +203,7 @@ def test_specs_build_the_same_fault(system: FakeSystem) -> None:
         FcLinkFault(system, "host3"),
         FcLipFault(system, "host3"),
         TcpPortFault(system, "10.0.0.1", 4421),
+        TcpRefuseFault(system, "10.0.0.1", 4422),
     ):
         assert make_fault(fault.spec(), Context(system)).key == fault.key
 

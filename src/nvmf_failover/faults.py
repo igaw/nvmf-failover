@@ -286,6 +286,7 @@ class TcpPortFault(Fault):
     kind = "tcp-port"
     table = ("inet", "nvmf_failover")
     chain = "input"
+    hook = "input"
 
     def __init__(self, system: System, address: str, port: int) -> None:
         self.system, self.address, self.port = system, address, port
@@ -302,6 +303,9 @@ class TcpPortFault(Fault):
         """The handles of this fault's rules."""
         family, name = self.table
         if not self.system.ok(["nft", "list", "table", family, name]):
+            return []
+        # tcp-port and tcp-refuse share the table, each has its own chain
+        if not self.system.ok(["nft", "list", "chain", family, name, self.chain]):
             return []
         data = json.loads(
             self.system.run(
@@ -327,7 +331,7 @@ class TcpPortFault(Fault):
                 family,
                 name,
                 self.chain,
-                "{ type filter hook input priority -10 ; }",
+                f"{{ type filter hook {self.hook} priority -10 ; }}",
             ]
         )
         self.system.run(
@@ -338,17 +342,23 @@ class TcpPortFault(Fault):
                 family,
                 name,
                 self.chain,
-                self.family,
-                "saddr",
-                self.address,
-                "tcp",
-                "sport",
-                str(self.port),
-                "drop",
+                *self._rule(),
                 "comment",
                 f'"{self.key}"',
             ]
         )
+
+    def _rule(self) -> list[str]:
+        """The rule's match and verdict."""
+        return [
+            self.family,
+            "saddr",
+            self.address,
+            "tcp",
+            "sport",
+            str(self.port),
+            "drop",
+        ]
 
     def up(self) -> None:
         family, name = self.table
@@ -375,6 +385,36 @@ class TcpPortFault(Fault):
         family, name = self.table
         data = json.loads(self.system.run(["nft", "-j", "list", "table", family, name]))
         return any("rule" in item for item in data.get("nftables", []))
+
+
+class TcpRefuseFault(TcpPortFault):
+    """Refuse the host's connections to a TCP target port (nftables output
+    hook, reject with a TCP reset).
+
+    Where tcp-port silences a port, so that a connect waits for its SYN
+    retries, this one makes every connect fail at once with "connection
+    refused": a target port that is gone, e.g. a path that is down while
+    a host boots. Packets of connections already up are refused too, the
+    kernel then sees the connection reset.
+    """
+
+    kind = "tcp-refuse"
+    chain = "output"
+    hook = "output"
+
+    def _rule(self) -> list[str]:
+        return [
+            self.family,
+            "daddr",
+            self.address,
+            "tcp",
+            "dport",
+            str(self.port),
+            "reject",
+            "with",
+            "tcp",
+            "reset",
+        ]
 
 
 class BrocadePortFault(Fault):

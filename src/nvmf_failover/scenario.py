@@ -39,6 +39,7 @@ from .faults import (
     OntapLifFault,
     PciUnbindFault,
     TcpPortFault,
+    TcpRefuseFault,
 )
 from .ontap import Shell
 from .system import System
@@ -51,6 +52,7 @@ FAULT_KINDS = (
     "ontap-lif",
     "ontap-lif-cycle",
     "tcp-port",
+    "tcp-refuse",
     "brocade-port",
 )
 
@@ -146,6 +148,7 @@ TARGETS = {
     "pci-unbind": "host",
     "ontap-lif": "lif",
     "tcp-port": "address",
+    "tcp-refuse": "address",
     "brocade-port": "wwpn",
 }
 
@@ -166,7 +169,7 @@ def fault_raw(
             raw["vserver"] = vserver
     elif kind == "brocade-port":
         raw |= {"wwpn": target, "force": force}
-    elif kind == "tcp-port":
+    elif kind in ("tcp-port", "tcp-refuse"):
         address, sep, port = target.rpartition(":")
         if (
             not sep
@@ -197,6 +200,8 @@ def make_fault(raw: dict[str, Any], ctx: Context) -> Fault:
         )
     if kind == "tcp-port":
         return TcpPortFault(ctx.system, raw["address"], int(raw.get("port", 4420)))
+    if kind == "tcp-refuse":
+        return TcpRefuseFault(ctx.system, raw["address"], int(raw.get("port", 4420)))
     if kind == "brocade-port":
         if ctx.connect is None or not ctx.switches:
             raise FaultError("brocade-port needs [[brocade]] in the configuration")
