@@ -1,4 +1,5 @@
 import errno
+import fcntl
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -162,6 +163,51 @@ def test_tcp_refuse_up_without_its_chain(system: FakeSystem) -> None:
     TcpRefuseFault(system, "10.100.128.29", 4420).up()
 
     assert not [c for c in system.commands if c[:2] == ["nft", "delete"]]
+
+
+@dataclass
+class LockCheckingSystem(FakeSystem):
+    """Records whether another process could take the fault lock while
+    each nft command ran."""
+
+    unlocked: list[list[str]] = field(default_factory=list)
+
+    def _check(self, argv: list[str]) -> None:
+        with self.path(TcpPortFault.lock_path).open("w") as other:
+            try:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            fcntl.flock(other, fcntl.LOCK_UN)
+            self.unlocked.append(argv)
+
+    def run(self, argv: list[str], check: bool = True) -> str:
+        self._check(argv)
+        return super().run(argv, check)
+
+    def ok(self, argv: list[str]) -> bool:
+        self._check(argv)
+        return super().ok(argv)
+
+
+@pytest.mark.parametrize("cls", [TcpPortFault, TcpRefuseFault])
+def test_tcp_fault_holds_the_lock(tmp_path: Path, cls: type) -> None:
+    """Parallel runs share the table, and up() deletes it with its last
+    rule: no nft command may run without the lock, or one run deletes
+    the table while another adds its rule."""
+    system = LockCheckingSystem(root=tmp_path)
+    system.answers["nft -j list table inet nvmf_failover"] = _nft_chain()
+    for chain in ("input", "output"):
+        system.answers[f"nft -j -a list chain inet nvmf_failover {chain}"] = (
+            _nft_chain()
+        )
+    fault = cls(system, "10.100.128.29", 4420)
+
+    fault.down()
+    fault.up()
+
+    assert system.commands
+    assert system.unlocked == []
 
 
 def test_tcp_refuse_from_the_command_line() -> None:

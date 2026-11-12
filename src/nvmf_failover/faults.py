@@ -12,11 +12,13 @@ disabled switch port's logins, an unbound HBA's SCSI host).
 from __future__ import annotations
 
 import errno
+import fcntl
 import json
 import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -281,10 +283,15 @@ class TcpPortFault(Fault):
 
     The rules live in their own table, inet nvmf_failover, never in the
     host's ruleset. Each carries the fault's key as its comment.
+
+    Several processes may break and mend paths at once, e.g. parallel
+    boot tests. They share the table, which up() deletes when its last
+    rule is gone, so down() and up() hold a lock while they change it.
     """
 
     kind = "tcp-port"
     table = ("inet", "nvmf_failover")
+    lock_path = "/run/lock/nvmf-failover.lock"
     chain = "input"
     hook = "input"
 
@@ -298,6 +305,14 @@ class TcpPortFault(Fault):
 
     def spec(self) -> dict[str, Any]:
         return {"fault": self.kind, "address": self.address, "port": self.port}
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        path = self.system.path(self.lock_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
 
     def _handles(self) -> list[int]:
         """The handles of this fault's rules."""
@@ -319,6 +334,10 @@ class TcpPortFault(Fault):
         ]
 
     def down(self) -> None:
+        with self._locked():
+            self._down()
+
+    def _down(self) -> None:
         if self._handles():
             return
         family, name = self.table
@@ -361,6 +380,10 @@ class TcpPortFault(Fault):
         ]
 
     def up(self) -> None:
+        with self._locked():
+            self._up()
+
+    def _up(self) -> None:
         family, name = self.table
         for handle in self._handles():
             self.system.run(
